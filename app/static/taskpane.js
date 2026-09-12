@@ -517,22 +517,32 @@
   }
 
   function bindEvents() {
-    if (el.tab_btn_triage) {
-      el.tab_btn_triage.addEventListener("click", () => {
-        el.tab_triage.hidden = false;
-        el.tab_rules.hidden = true;
-        el.tab_btn_triage.className = "flex-1 py-2.5 text-center border-b-2 border-indigo-600 text-indigo-600 font-semibold";
-        el.tab_btn_rules.className = "flex-1 py-2.5 text-center border-b-2 border-transparent text-slate-500 hover:text-slate-800 font-semibold";
+    const TABS = [
+      { btn: "tab_btn_triage", pane: "tab_triage" },
+      { btn: "tab_btn_rules", pane: "tab_rules" },
+      { btn: "tab_btn_diagnostic", pane: "tab_diagnostic" },
+    ];
+
+    function switchTab(activeKey) {
+      TABS.forEach((t) => {
+        const btn = el[t.btn];
+        const pane = el[t.pane];
+        if (!btn || !pane) return;
+        const isActive = t.pane === activeKey;
+        pane.hidden = !isActive;
+        btn.className = isActive
+          ? "flex-1 py-2.5 text-center border-b-2 border-indigo-600 text-indigo-600 font-semibold"
+          : "flex-1 py-2.5 text-center border-b-2 border-transparent text-slate-500 hover:text-slate-800 font-semibold";
       });
     }
-    if (el.tab_btn_rules) {
-      el.tab_btn_rules.addEventListener("click", () => {
-        el.tab_triage.hidden = true;
-        el.tab_rules.hidden = false;
-        el.tab_btn_rules.className = "flex-1 py-2.5 text-center border-b-2 border-indigo-600 text-indigo-600 font-semibold";
-        el.tab_btn_triage.className = "flex-1 py-2.5 text-center border-b-2 border-transparent text-slate-500 hover:text-slate-800 font-semibold";
-      });
-    }
+
+    TABS.forEach((t) => {
+      const btn = el[t.btn];
+      if (btn) btn.addEventListener("click", () => switchTab(t.pane));
+    });
+
+    if (el.btn_run_diagnostic) el.btn_run_diagnostic.addEventListener("click", runDiagnostic);
+    if (el.btn_copy_diagnostic) el.btn_copy_diagnostic.addEventListener("click", copyDiagnostic);
 
     if (el.btn_refresh_selection) el.btn_refresh_selection.addEventListener("click", refreshSelection);
     if (el.btn_run_triage) el.btn_run_triage.addEventListener("click", runTriage);
@@ -595,6 +605,184 @@
         setStoredToken(el.input_auth_token ? el.input_auth_token.value : "");
         el.settings_card.hidden = true;
       });
+    }
+  }
+
+  // ------------------------------------------------------------------ //
+  // Diagnostic des capacités de la boîte aux lettres
+  // ------------------------------------------------------------------ //
+
+  function _ewsFindFolderXml() {
+    return `<?xml version="1.0" encoding="utf-8"?>
+<soap:Envelope xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+               xmlns:m="http://schemas.microsoft.com/exchange/services/2006/messages"
+               xmlns:t="http://schemas.microsoft.com/exchange/services/2006/types"
+               xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
+  <soap:Header>
+    <t:RequestServerVersion Version="Exchange2013" />
+  </soap:Header>
+  <soap:Body>
+    <m:FindFolder Traversal="Deep">
+      <m:FolderShape>
+        <t:BaseShape>Default</t:BaseShape>
+      </m:FolderShape>
+      <m:ParentFolderIds>
+        <t:DistinguishedFolderId Id="msgfolderroot"/>
+      </m:ParentFolderIds>
+    </m:FindFolder>
+  </soap:Body>
+</soap:Envelope>`;
+  }
+
+  async function runDiagnostic() {
+    const lines = [];
+    const sep = "────────────────────────────────────────";
+    const log = (s) => lines.push(s || "");
+    const ok = (s) => log("  [OK]    " + s);
+    const ko = (s) => log("  [ECHEC] " + s);
+    const info = (s) => log("  [info]  " + s);
+    const dump = () => { if (el.diagnostic_output) el.diagnostic_output.textContent = lines.join("\n"); };
+
+    if (el.diagnostic_output) el.diagnostic_output.textContent = "Diagnostic en cours…";
+    if (el.btn_run_diagnostic) el.btn_run_diagnostic.disabled = true;
+
+    log("=== DIAGNOSTIC Triage_Outlook ===");
+    log("Date    : " + new Date().toLocaleString("fr-FR"));
+    log("Version : " + CONFIG.version);
+    log(sep);
+
+    // --- TEST 1 : hôte et identité ---
+    log("TEST 1 — Hôte et identité de session");
+    if (!window.Office || !Office.context) {
+      ko("Office.js indisponible (page ouverte dans un navigateur)");
+      dump();
+      if (el.btn_run_diagnostic) el.btn_run_diagnostic.disabled = false;
+      return;
+    }
+    const mb = Office.context.mailbox;
+    try { info("Hôte        : " + String(Office.context.host)); } catch (e) { info("Hôte : ?"); }
+    try { info("Plateforme  : " + String(Office.context.platform)); } catch (e) { info("Plateforme : ?"); }
+    if (mb && mb.userProfile) {
+      info("Connecté en : " + (mb.userProfile.emailAddress || "?"));
+      info("Compte      : " + (mb.userProfile.displayName || "?"));
+    }
+    const versions = ["1.1","1.3","1.5","1.8","1.10","1.11","1.12","1.13","1.14","1.15"];
+    const supported = versions.filter((v) => { try { return Office.context.requirements.isSetSupported("Mailbox", v); } catch (e) { return false; } });
+    info("Versions Mailbox supportées : " + (supported.join(", ") || "aucune"));
+    log(sep);
+
+    // --- TEST 2 : lecture de la sélection ---
+    log("TEST 2 — Lecture de la sélection");
+    if (typeof mb.getSelectedItemsAsync === "function") {
+      if (supported.indexOf("1.13") !== -1) { ok("getSelectedItemsAsync disponible (multi-sélection)"); }
+      else { info("getSelectedItemsAsync exposé, mais Mailbox 1.13 non confirmé"); }
+      await new Promise((resolve) => {
+        mb.getSelectedItemsAsync((res) => {
+          if (res.status === Office.AsyncResultStatus.Succeeded) {
+            const n = (res.value || []).length;
+            if (n > 0) {
+              ok(n + " élément(s) dans la sélection");
+              (res.value || []).slice(0, 3).forEach((it) => info("   • " + String(it.subject || "").slice(0, 70)));
+            } else { ko("Sélection vide (sélectionnez des messages puis relancez)"); }
+          } else {
+            ko("Échec : " + (res.error ? res.error.message : "inconnu"));
+          }
+          resolve();
+        });
+      });
+    } else {
+      ko("getSelectedItemsAsync indisponible");
+    }
+    if (mb.item) { ok("Un message est ouvert (mode lecture simple)"); } else { info("Aucun message ouvert (mode multi-sélection)"); }
+    log(sep);
+
+    // --- TEST 3 : EWS ---
+    log("TEST 3 — EWS makeEwsRequestAsync (indispensable au déplacement)");
+    if (typeof mb.makeEwsRequestAsync !== "function") {
+      ko("makeEwsRequestAsync indisponible sur ce client");
+      dump();
+      if (el.btn_run_diagnostic) el.btn_run_diagnostic.disabled = false;
+      return;
+    }
+    ok("makeEwsRequestAsync exposé par le client");
+    const ewsOk = await new Promise((resolve) => {
+      mb.makeEwsRequestAsync(_ewsFindFolderXml(), (res) => {
+        if (res.status === Office.AsyncResultStatus.Succeeded) {
+          try {
+            const xml = new DOMParser().parseFromString(res.value, "text/xml");
+            let nodes = xml.getElementsByTagName("t:Folder");
+            if (!nodes.length) nodes = xml.getElementsByTagName("Folder");
+            ok("EWS OPÉRATIONNEL — " + nodes.length + " dossier(s) lus");
+            const names = [];
+            for (let i = 0; i < nodes.length; i++) {
+              const dn = nodes[i].getElementsByTagName("t:DisplayName")[0] || nodes[i].getElementsByTagName("DisplayName")[0];
+              if (dn) names.push(dn.textContent);
+            }
+            if (names.length) info("Dossiers : " + names.slice(0, 15).join(" | "));
+            resolve(true);
+          } catch (e) {
+            ko("Réponse EWS illisible : " + e.message);
+            resolve(false);
+          }
+        } else {
+          ko("EWS REFUSÉ : " + (res.error ? res.error.message : "inconnu"));
+          info("→ Comportement attendu dans une boîte partagée : le déplacement direct sera impossible.");
+          resolve(false);
+        }
+      });
+    });
+    log(sep);
+
+    // --- TEST 4 : catégories de couleur ---
+    log("TEST 4 — Catégories de couleur (mode dégradé possible)");
+    const item = mb.item;
+    if (!item) {
+      info("Aucun message ouvert : test ignoré (ouvrez un message de la boîte partagée)");
+    } else if (!item.categories || typeof item.categories.addAsync !== "function") {
+      ko("item.categories.addAsync indisponible");
+    } else {
+      const label = "HermesTest";
+      await new Promise((resolve) => {
+        item.categories.addAsync([label], (res) => {
+          if (res.status === Office.AsyncResultStatus.Succeeded) {
+            ok("Catégorie ajoutée avec succès → les catégories FONCTIONNENT");
+            item.categories.removeAsync([label], (r2) => {
+              if (r2.status === Office.AsyncResultStatus.Succeeded) { ok("Catégorie de test retirée (aucune trace laissée)"); }
+              else { info("Nettoyage : à retirer manuellement si besoin"); }
+              resolve();
+            });
+          } else {
+            ko("Échec catégorie : " + (res.error ? res.error.message : "inconnu"));
+            resolve();
+          }
+        });
+      });
+    }
+    log(sep);
+
+    // --- Synthèse ---
+    log("SYNTHÈSE");
+    if (ewsOk) {
+      ok("Déplacement automatique par EWS : POSSIBLE sur cette boîte");
+      info("→ L'Add-in peut trier et déplacer les messages directement.");
+    } else {
+      ko("Déplacement automatique par EWS : IMPOSSIBLE sur cette boîte");
+      info("→ Solutions de repli : catégories de couleur + règle Outlook, ou Power Automate.");
+    }
+    log("");
+    log("Fin du diagnostic — utilisez le bouton « Copier » pour me transmettre ce rapport.");
+
+    dump();
+    if (el.btn_run_diagnostic) el.btn_run_diagnostic.disabled = false;
+  }
+
+  async function copyDiagnostic() {
+    const txt = el.diagnostic_output ? el.diagnostic_output.textContent : "";
+    try {
+      await navigator.clipboard.writeText(txt);
+      showAlert("info", "✓ Rapport de diagnostic copié dans le presse-papier.");
+    } catch (e) {
+      showAlert("error", "Copie impossible : sélectionnez le texte manuellement.");
     }
   }
 
