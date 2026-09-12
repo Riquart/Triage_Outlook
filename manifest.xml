@@ -99,7 +99,7 @@
       </bt:Urls>
       <bt:ShortStrings>
         <bt:String id="GroupLabel" DefaultValue="Triage IA"/>
-        <bt:String id="TaskpaneButton.Label" DefaultValue="Trier les e-mails"/>
+        <bt:String id="TaskpaneButton.Label" DefaultValue="Trier"/>
       </bt:ShortStrings>
       <bt:LongStrings>
         <bt:String id="TaskpaneButton.Tooltip" DefaultValue="Classer automatiquement la sélection d'e-mails selon vos règles personnalisées."/>
