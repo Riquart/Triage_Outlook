@@ -14,30 +14,35 @@
     {
       id: "folder-commandes",
       name: "Commandes & Matériel",
+      category: "Commandes & Matériel",
       rule: "Mails des clients souhaitant acheter un nouveau lecteur, renouveler leur matériel, commander des accessoires ou obtenir un devis.",
       active: true,
     },
     {
       id: "folder-support",
       name: "Support & Pannes",
+      category: "Support & Pannes",
       rule: "Blocages techniques, lecteur non reconnu, erreurs de télétransmission, téléphones ou bugs nécessitant une assistance.",
       active: true,
     },
     {
       id: "folder-facturation",
       name: "Facturation & Comptabilité",
+      category: "Facturation & Comptabilité",
       rule: "Demandes de factures, duplicatas, changements de RIB, questions sur les prélèvements et contestations.",
       active: true,
     },
     {
       id: "folder-resiliations",
       name: "Résiliations & Départs",
+      category: "Résiliations & Départs",
       rule: "Cessions de cabinet, départs à la retraite, vente d'activité et demandes de résiliation de contrat.",
       active: true,
     },
     {
       id: "folder-divers",
       name: "Information & Divers",
+      category: "Information & Divers",
       rule: "Newsletters, informations générales, courriers informatifs sans action urgente requise.",
       active: true,
     },
@@ -47,6 +52,9 @@
     selectedEmails: [],
     folders: [],
     classifications: [],
+    masterCategories: [],
+    hasBatchApi: false,
+    isShared: false,
     busy: false,
     preview: false,
   };
@@ -79,6 +87,53 @@
     }
   }
 
+  function loadMasterCategories() {
+    if (!window.Office || !Office.context || !Office.context.mailbox) return;
+    const mb = Office.context.mailbox;
+    if (!mb.masterCategories || typeof mb.masterCategories.getAsync !== "function") return;
+    mb.masterCategories.getAsync((res) => {
+      if (res.status === Office.AsyncResultStatus.Succeeded) {
+        state.masterCategories = (res.value || []).map((c) => c.displayName || String(c));
+        renderFolders();
+      }
+    });
+  }
+
+  /** Crée dans la liste maître les catégories manquantes (peut être refusé en délégation). */
+  async function createMissingCategories() {
+    clearAlerts();
+    if (!window.Office || !Office.context || !Office.context.mailbox) {
+      showAlert("info", "Mode aperçu : création de catégories simulée.");
+      return;
+    }
+    const mb = Office.context.mailbox;
+    if (!mb.masterCategories || typeof mb.masterCategories.addAsync !== "function") {
+      showAlert("error", "Gestion des catégories indisponible sur ce client.");
+      return;
+    }
+    const wanted = state.folders.filter((f) => f.active && f.category).map((f) => f.category);
+    const missing = wanted.filter((w) => state.masterCategories.indexOf(w) === -1);
+    if (!missing.length) {
+      showAlert("info", "Toutes les catégories existent déjà dans votre liste maître.");
+      return;
+    }
+    const payload = missing.map((n) => ({ displayName: n, color: Office.MailboxEnums.CategoryColor.Preset0 }));
+    await new Promise((resolve) => {
+      mb.masterCategories.addAsync(payload, (res) => {
+        if (res.status === Office.AsyncResultStatus.Succeeded) {
+          showAlert("info", "✓ " + missing.length + " catégorie(s) créée(s) : " + missing.join(", "));
+          loadMasterCategories();
+        } else {
+          showAlert("error",
+            "Création refusée (" + (res.error ? res.error.message : "?") + "). " +
+            "En délégation, Microsoft interdit de modifier la liste maître : " +
+            "créez ces catégories manuellement dans Outlook (Réglages > Catégories).");
+        }
+        resolve();
+      });
+    });
+  }
+
   function loadFolders() {
     try {
       const saved = localStorage.getItem(STORAGE_KEY_RULES);
@@ -96,6 +151,21 @@
   function saveFolders() {
     localStorage.setItem(STORAGE_KEY_RULES, JSON.stringify(state.folders));
     renderFolders();
+  }
+
+  /** Construit les <option> du sélecteur de catégorie pour un dossier. */
+  function catOptionsHtml(current) {
+    const cats = state.masterCategories.slice();
+    const known = current && cats.indexOf(current) !== -1;
+    let html = '<option value=""' + (!current ? ' selected' : '') + '>— Aucune —</option>';
+    if (current && !known) {
+      html += '<option value="' + escapeHtml(current) + '" selected>⚠ ' + escapeHtml(current) + ' (à créer)</option>';
+    }
+    cats.forEach((c) => {
+      const sel = c === current ? ' selected' : '';
+      html += '<option value="' + escapeHtml(c) + '"' + sel + '>' + escapeHtml(c) + '</option>';
+    });
+    return html;
   }
 
   function renderFolders() {
@@ -120,6 +190,12 @@
           <label class="block text-[10px] text-slate-400 font-semibold uppercase mb-1">Règle d'attribution</label>
           <textarea rows="2" class="folder-rule w-full rounded-lg border border-slate-200 p-2 text-xs text-slate-700 placeholder:text-slate-400 focus:ring-1 focus:ring-indigo-500 focus:outline-none" data-idx="${idx}" placeholder="Décrivez les e-mails à classer ici...">${escapeHtml(f.rule || "")}</textarea>
         </div>
+        <div>
+          <label class="block text-[10px] text-slate-400 font-semibold uppercase mb-1">🏷️ Catégorie Outlook à appliquer</label>
+          <select class="folder-cat w-full rounded-lg border border-slate-200 p-1.5 text-xs text-slate-700 focus:ring-1 focus:ring-indigo-500 focus:outline-none" data-idx="${idx}">
+            ${catOptionsHtml(f.category)}
+          </select>
+        </div>
       `;
       el.folders_container.appendChild(card);
     });
@@ -136,6 +212,14 @@
       txt.addEventListener("input", (e) => {
         const idx = Number(e.target.dataset.idx);
         state.folders[idx].rule = e.target.value.trim();
+        localStorage.setItem(STORAGE_KEY_RULES, JSON.stringify(state.folders));
+      });
+    });
+
+    el.folders_container.querySelectorAll(".folder-cat").forEach((sel) => {
+      sel.addEventListener("change", (e) => {
+        const idx = Number(e.target.dataset.idx);
+        state.folders[idx].category = e.target.value;
         localStorage.setItem(STORAGE_KEY_RULES, JSON.stringify(state.folders));
       });
     });
@@ -198,6 +282,24 @@
     } else {
       renderSelectedEmails();
     }
+  }
+
+  /** Détecte si l'on est dans une boîte partagée (accès délégué). */
+  function detectSharedContext() {
+    const mb = Office.context.mailbox;
+    if (!mb.item || typeof mb.item.getSharedPropertiesAsync !== "function") return;
+    mb.item.getSharedPropertiesAsync((res) => {
+      if (res.status === Office.AsyncResultStatus.Succeeded && res.value && res.value.targetMailbox) {
+        state.isShared = true;
+        const n = el.shared_notice;
+        if (n) {
+          n.hidden = false;
+          n.textContent = "📥 Boîte partagée " + res.value.targetMailbox +
+            " : le déplacement direct est bloqué par Microsoft. L'IA applique les catégories, " +
+            "puis vous déplacez par blocs.";
+        }
+      }
+    });
   }
 
   function setupMockEmails() {
@@ -347,6 +449,7 @@
           </select>
         </div>
         <p class="text-[10px] text-slate-500 italic">💡 ${escapeHtml(c.justification || "")}</p>
+        <p class="text-[10px] font-semibold text-indigo-700">🏷️ ${escapeHtml(categoryForClassification(c) || "aucune catégorie mappée")}</p>
       `;
       el.results_list.appendChild(row);
     });
@@ -357,6 +460,108 @@
         const selectedOption = e.target.options[e.target.selectedIndex];
         state.classifications[idx].target_folder_id = e.target.value;
         state.classifications[idx].target_folder_name = selectedOption.text;
+      });
+    });
+  }
+
+  /** Catégorie cible d'une classification, ou "" si aucune. */
+  function categoryForClassification(c) {
+    const folder = state.folders.find((f) => f.name === c.target_folder_name);
+    if (folder) return folder.category || "";
+    const byId = state.folders.find((f) => f.id === c.target_folder_id);
+    return byId ? (byId.category || "") : "";
+  }
+
+  /**
+   * Applique les catégories de couleur.
+   * Lot (Mailbox 1.15+, Outlook Web/Windows) : loadItemByIdAsync sur chaque message.
+   * Mono-message (Mac, <= 1.14) : uniquement le message actuellement ouvert.
+   */
+  async function applyCategories() {
+    if (!state.classifications.length) return;
+    clearAlerts();
+
+    if (state.preview || !window.Office || !Office.context || !Office.context.mailbox) {
+      showAlert("info", "✓ Mode démonstration : catégories appliquées virtuellement.");
+      return;
+    }
+
+    const todo = state.classifications
+      .map((c) => ({ itemId: c.item_id, category: categoryForClassification(c) }))
+      .filter((t) => t.category);
+
+    if (!todo.length) {
+      showAlert("error", "Aucune catégorie mappée. Allez dans « Dossiers & Règles » pour associer une catégorie à chaque dossier.");
+      return;
+    }
+
+    const mb = Office.context.mailbox;
+
+    // ---- Mode lot (1.15+) ----
+    if (state.hasBatchApi) {
+      setBusy(true);
+      let okCount = 0, failCount = 0;
+      for (const t of todo) {
+        try {
+          await applyCategoryToItemId(mb, t.itemId, t.category);
+          okCount++;
+        } catch (e) {
+          console.warn("Catégorie refusée pour", t.itemId, e);
+          failCount++;
+        }
+      }
+      setBusy(false);
+      if (failCount === 0) {
+        showAlert("info", "🏷️ " + okCount + " message(s) catégorisé(s). Vous pouvez maintenant les déplacer par blocs (tri par catégorie).");
+      } else {
+        showAlert("error", okCount + " réussi(s), " + failCount + " échec(s).");
+      }
+      return;
+    }
+
+    // ---- Mode mono-message (Mac) ----
+    if (todo.length > 1) {
+      showAlert("error",
+        "Ce client Outlook ne permet de catégoriser qu'un message à la fois " +
+        "(Mailbox 1.15, absent d'Outlook pour Mac). " +
+        "Astuce : utilisez Outlook sur le web (outlook.office.com) pour traiter les lots.");
+      return;
+    }
+
+    const item = mb.item;
+    if (!item || !item.categories) {
+      showAlert("error", "Ouvrez un message dans le volet de lecture, puis réessayez.");
+      return;
+    }
+    await new Promise((resolve) => {
+      item.categories.addAsync([todo[0].category], (res) => {
+        if (res.status === Office.AsyncResultStatus.Succeeded) {
+          showAlert("info", "🏷️ Catégorie « " + todo[0].category + " » appliquée.");
+        } else {
+          showAlert("error", "Catégorie refusée : " + (res.error ? res.error.message : "?"));
+        }
+        resolve();
+      });
+    });
+  }
+
+  /** Charge un message par son ID et lui applique une catégorie (Mailbox 1.15+). */
+  function applyCategoryToItemId(mb, itemId, category) {
+    return new Promise((resolve, reject) => {
+      mb.loadItemByIdAsync(itemId, (res) => {
+        if (res.status !== Office.AsyncResultStatus.Succeeded) {
+          reject(new Error(res.error ? res.error.message : "Chargement impossible"));
+          return;
+        }
+        const loaded = res.value;
+        loaded.categories.addAsync([category], (r2) => {
+          const done = (ok) => {
+            loaded.unloadAsync(() => {
+              ok ? resolve(true) : reject(new Error("Catégorie refusée"));
+            });
+          };
+          done(r2.status === Office.AsyncResultStatus.Succeeded);
+        });
       });
     });
   }
@@ -546,6 +751,8 @@
 
     if (el.btn_refresh_selection) el.btn_refresh_selection.addEventListener("click", refreshSelection);
     if (el.btn_run_triage) el.btn_run_triage.addEventListener("click", runTriage);
+    if (el.btn_apply_categories) el.btn_apply_categories.addEventListener("click", applyCategories);
+    if (el.btn_create_categories) el.btn_create_categories.addEventListener("click", createMissingCategories);
     if (el.btn_apply_move) el.btn_apply_move.addEventListener("click", applyMove);
     if (el.btn_detect_folders) el.btn_detect_folders.addEventListener("click", detectOutlookFolders);
 
@@ -919,9 +1126,23 @@
   loadFolders();
   updateAuthUI();
 
+  // Capacité de catégorisation par lot : nécessite Mailbox 1.15 (Web / Windows, pas Mac)
+  try {
+    state.hasBatchApi =
+      typeof Office !== "undefined" &&
+      Office.context &&
+      Office.context.requirements &&
+      Office.context.requirements.isSetSupported("Mailbox", "1.15") &&
+      typeof Office.context.mailbox.loadItemByIdAsync === "function";
+  } catch (e) {
+    state.hasBatchApi = false;
+  }
+
   if (window.Office) {
     Office.onReady((info) => {
       refreshSelection();
+      loadMasterCategories();
+      detectSharedContext();
     });
   } else {
     setupMockEmails();
