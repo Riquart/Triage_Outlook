@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Triage_Outlook — Complément IA de tri d'e-mails</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-50 text-slate-800 antialiased min-h-screen flex flex-col">
+  <header class="border-b border-slate-200 bg-white">
+    <div class="max-w-4xl mx-auto px-6 py-4 flex items-center justify-between">
+      <div class="flex items-center gap-3">
+        <div class="w-10 h-10 rounded-xl bg-indigo-600 flex items-center justify-center text-white font-bold shadow-md">
+          TO
+        </div>
+        <div>
+          <h1 class="font-bold text-lg text-slate-900 leading-tight">Triage_Outlook</h1>
+          <p class="text-xs text-slate-500">Tri & classement automatique par lot pour Microsoft Outlook</p>
+        </div>
+      </div>
+      <div class="flex items-center gap-3">
+        <span class="px-2.5 py-1 text-xs font-semibold rounded-full {{ 'bg-amber-100 text-amber-800' if status.demo else 'bg-emerald-100 text-emerald-800' }}">
+          {{ 'Mode Démo' if status.demo else 'IA Active (' ~ status.provider ~ ')' }}
+        </span>
+      </div>
+    </div>
+  </header>
+
+  <main class="flex-1 max-w-4xl mx-auto px-6 py-10 space-y-8 w-full">
+    <div class="bg-gradient-to-br from-indigo-900 to-slate-900 rounded-3xl p-8 text-white shadow-xl">
+      <h2 class="text-2xl font-extrabold tracking-tight">Triez des dizaines d'e-mails en 1 clic grâce à l'IA</h2>
+      <p class="mt-3 text-slate-300 text-sm max-w-2xl leading-relaxed">
+        Ce complément Outlook analyse les e-mails reçus sur votre boîte (individuelle ou partagée),
+        comprend l'intention de chaque client selon vos propres règles en français,
+        et déplace les messages dans les bons sous-dossiers.
+      </p>
+      <div class="mt-6 flex flex-wrap items-center gap-4">
+        <a href="/manifest.xml?download=1"
+           class="inline-flex items-center gap-2 bg-indigo-500 hover:bg-indigo-400 text-white font-semibold text-sm px-5 py-2.5 rounded-xl shadow-md transition">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+          Télécharger le Manifest (manifest.xml)
+        </a>
+        <a href="/taskpane.html" target="_blank"
+           class="inline-flex items-center gap-2 bg-white/10 hover:bg-white/20 text-white font-semibold text-sm px-5 py-2.5 rounded-xl transition">
+          Tester le volet dans le navigateur &rarr;
+        </a>
+      </div>
+    </div>
+
+    <div class="grid md:grid-cols-3 gap-6">
+      <div class="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm">
+        <div class="w-8 h-8 rounded-lg bg-indigo-100 text-indigo-700 flex items-center justify-center font-bold mb-3">1</div>
+        <h3 class="font-bold text-slate-900 text-sm">Sélection multiple</h3>
+        <p class="text-xs text-slate-500 mt-1.5 leading-relaxed">
+          Sélectionnez 10, 20 ou 50 e-mails d'un coup dans votre boîte de réception Outlook.
+        </p>
+      </div>
+      <div class="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm">
+        <div class="w-8 h-8 rounded-lg bg-indigo-100 text-indigo-700 flex items-center justify-center font-bold mb-3">2</div>
+        <h3 class="font-bold text-slate-900 text-sm">Règles en français</h3>
+        <p class="text-xs text-slate-500 mt-1.5 leading-relaxed">
+          Définissez pour chaque dossier la règle en langage naturel (ex: « Mails de clients voulant un nouveau lecteur »).
+        </p>
+      </div>
+      <div class="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm">
+        <div class="w-8 h-8 rounded-lg bg-indigo-100 text-indigo-700 flex items-center justify-center font-bold mb-3">3</div>
+        <h3 class="font-bold text-slate-900 text-sm">Déplacement natif</h3>
+        <p class="text-xs text-slate-500 mt-1.5 leading-relaxed">
+          L'IA attribue chaque message et vous validez le déplacement en un clic vers les sous-dossiers réels.
+        </p>
+      </div>
+    </div>
+
+    <div class="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm space-y-4">
+      <h3 class="font-bold text-slate-900 text-base">Installation dans Outlook</h3>
+      <ol class="list-decimal list-inside space-y-2 text-sm text-slate-600">
+        <li>Téléchargez le fichier <code class="bg-slate-100 px-1.5 py-0.5 rounded text-indigo-600 font-mono text-xs">manifest.xml</code> ci-dessus.</li>
+        <li>Dans Outlook (Web ou Mac/Windows), ouvrez un e-mail > <strong>Compléments</strong> > <strong>Mes compléments</strong>.</li>
+        <li>En bas, cliquez sur <strong>+ Ajouter un complément personnalisé</strong> > <strong>Ajouter à partir d'un fichier...</strong></li>
+        <li>Sélectionnez le fichier <code class="bg-slate-100 px-1.5 py-0.5 rounded text-indigo-600 font-mono text-xs">manifest.xml</code>.</li>
+      </ol>
+    </div>
+  </main>
+
+  <footer class="border-t border-slate-200 py-6 text-center text-xs text-slate-400">
+    Triage_Outlook v{{ version }}
+  </footer>
+</body>
+</html>

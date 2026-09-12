@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Triage_Outlook — Triage IA</title>
+  <script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body { font-family: ui-sans-serif, system-ui, "Segoe UI", Roboto, sans-serif; }
+    [hidden] { display: none !important; }
+  </style>
+</head>
+<body class="bg-slate-50 text-slate-800 antialiased text-xs">
+  <script id="app-config" type="application/json">
+    {{ {'apiUrl': api_url, 'verifyUrl': verify_url, 'version': version, 'status': status, 'authRequired': auth_required} | tojson }}
+  </script>
+
+  <div class="min-h-screen flex flex-col">
+    <!-- Header -->
+    <header class="sticky top-0 z-20 border-b border-slate-200 bg-white/95 px-3 py-2.5 backdrop-blur flex items-center justify-between shadow-sm">
+      <div class="flex items-center gap-2">
+        <div class="w-7 h-7 rounded-lg bg-indigo-600 flex items-center justify-center text-white font-bold text-xs shadow-sm">
+          TO
+        </div>
+        <div>
+          <h1 class="font-bold text-slate-900 text-xs leading-none">Triage Intelligent</h1>
+          <p id="header-subtitle" class="text-[10px] text-slate-400 mt-0.5">
+            {{ 'Démo' if status.demo else 'IA Active (' ~ status.provider ~ ')' }}
+          </p>
+        </div>
+      </div>
+      <div class="flex items-center gap-1.5">
+        <button type="button" id="btn-settings-toggle" title="Paramètres & Code Secret" class="p-1 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-md transition">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+        </button>
+      </div>
+    </header>
+
+    <!-- Settings Card (Auth Token) -->
+    <section id="settings-card" hidden class="border-b border-indigo-100 bg-indigo-50/70 p-3 space-y-2">
+      <div class="flex items-center justify-between">
+        <p class="font-bold text-[11px] text-indigo-900">Code secret d'accès</p>
+        <button type="button" id="btn-settings-close" class="text-slate-400 hover:text-slate-600 text-[11px]">✕</button>
+      </div>
+      <p class="text-[10px] text-slate-600">Requis si votre administrateur a configuré AUTH_TOKEN.</p>
+      <div class="flex gap-1.5">
+        <input type="password" id="input-auth-token" placeholder="Code secret..." class="flex-1 rounded-md border border-slate-300 bg-white px-2 py-1 text-xs focus:ring-1 focus:ring-indigo-500 focus:outline-none">
+        <button type="button" id="btn-save-auth-token" class="bg-indigo-600 text-white font-semibold px-2.5 py-1 rounded-md text-[11px] hover:bg-indigo-700">Enregistrer</button>
+      </div>
+      <p id="auth-status-text" class="text-[10px]"></p>
+    </section>
+
+    <!-- Navigation Tabs -->
+    <nav class="flex border-b border-slate-200 bg-white text-xs font-semibold">
+      <button type="button" id="tab-btn-triage" class="flex-1 py-2.5 text-center border-b-2 border-indigo-600 text-indigo-600 transition">
+        📥 Triage (<span id="selected-count">0</span>)
+      </button>
+      <button type="button" id="tab-btn-rules" class="flex-1 py-2.5 text-center border-b-2 border-transparent text-slate-500 hover:text-slate-800 transition">
+        ⚙️ Dossiers & Règles (<span id="active-rules-count">0</span>)
+      </button>
+    </nav>
+
+    <!-- Tab 1: Triage -->
+    <main id="tab-triage" class="flex-1 p-3 space-y-3">
+      <!-- Error / Info Banners -->
+      <div id="banner-error" hidden class="rounded-lg border border-red-200 bg-red-50 p-2.5 text-red-800 text-[11px]">
+        <p class="font-bold">Erreur</p>
+        <p id="banner-error-text" class="mt-0.5"></p>
+      </div>
+      <div id="banner-info" hidden class="rounded-lg border border-emerald-200 bg-emerald-50 p-2.5 text-emerald-800 text-[11px]">
+        <p id="banner-info-text"></p>
+      </div>
+
+      <!-- Action Bar -->
+      <div class="flex items-center justify-between gap-2">
+        <button type="button" id="btn-refresh-selection" class="flex items-center gap-1 text-[11px] text-slate-500 hover:text-indigo-600 font-medium">
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+          Recharger sélection
+        </button>
+        <button type="button" id="btn-run-triage" class="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold px-3 py-1.5 rounded-lg shadow-sm flex items-center gap-1.5 transition disabled:opacity-50">
+          <svg id="spinner-triage" hidden class="w-3 h-3 animate-spin" viewBox="0 0 24 24" fill="none"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>
+          <span>⚡ Analyser & Classer</span>
+        </button>
+      </div>
+
+      <!-- Email Selection List -->
+      <div id="emails-list" class="space-y-2">
+        <p class="text-[11px] text-slate-400 text-center py-6">
+          Sélectionnez un ou plusieurs e-mails dans votre boîte Outlook...
+        </p>
+      </div>
+
+      <!-- Results Panel -->
+      <section id="results-panel" hidden class="space-y-2 pt-2 border-t border-slate-200">
+        <div class="flex items-center justify-between">
+          <p class="font-bold text-slate-900 text-xs">Résultats du tri proposé</p>
+          <span id="results-count" class="text-[10px] text-slate-500"></span>
+        </div>
+        <div id="results-list" class="space-y-2"></div>
+
+        <!-- Move Actions -->
+        <div class="pt-3 space-y-2">
+          <button type="button" id="btn-apply-move" class="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2.5 rounded-xl shadow transition flex items-center justify-center gap-1.5">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg>
+            <span>📁 Déplacer les messages classés</span>
+          </button>
+          <button type="button" id="btn-apply-categories" class="w-full bg-white hover:bg-slate-50 text-slate-700 font-semibold py-1.5 rounded-lg border border-slate-300 text-[11px] transition">
+            🏷️ Appliquer seulement les catégories de couleur
+          </button>
+        </div>
+      </section>
+    </main>
+
+    <!-- Tab 2: Rules -->
+    <main id="tab-rules" hidden class="flex-1 p-3 space-y-3">
+      <div class="flex items-center justify-between gap-2">
+        <div>
+          <h2 class="font-bold text-xs text-slate-900">Dossiers & Règles</h2>
+          <p class="text-[10px] text-slate-500">Cochez les dossiers et décrivez ce qu'ils doivent contenir.</p>
+        </div>
+        <button type="button" id="btn-detect-folders" class="bg-indigo-50 text-indigo-700 hover:bg-indigo-100 font-semibold px-2 py-1 rounded text-[10px] transition border border-indigo-200">
+          🔄 Détecter Outlook
+        </button>
+      </div>
+
+      <div id="folders-container" class="space-y-2.5">
+        <!-- Rendered by JS -->
+      </div>
+
+      <div class="pt-2 flex items-center justify-between gap-2 border-t border-slate-200">
+        <button type="button" id="btn-add-folder" class="text-indigo-600 hover:text-indigo-800 font-semibold text-[11px] flex items-center gap-1">
+          + Ajouter un dossier manuel
+        </button>
+        <div class="flex items-center gap-1.5">
+          <button type="button" id="btn-export-rules" class="text-[10px] text-slate-500 hover:text-slate-800">Exporter</button>
+          <span class="text-slate-300">|</span>
+          <button type="button" id="btn-import-rules" class="text-[10px] text-slate-500 hover:text-slate-800">Importer</button>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <script src="/static/taskpane.js"></script>
+</body>
+</html>
