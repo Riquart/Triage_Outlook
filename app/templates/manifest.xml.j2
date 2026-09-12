@@ -64,6 +64,9 @@
       <Hosts>
         <Host xsi:type="MailHost">
           <DesktopFormFactor>
+            <!-- REQUIS pour que l'Add-in s'active dans une boite partagee (acces delegue).
+                 Sans cette ligne, l'icone reste grisee dans la boite partagee. -->
+            <SupportsSharedFolders>true</SupportsSharedFolders>
             <ExtensionPoint xsi:type="MessageReadCommandSurface">
               <OfficeTab id="TabDefault">
                 <Group id="triageOutlookGroup">

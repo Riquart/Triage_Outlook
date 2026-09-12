@@ -666,6 +666,32 @@
       info("Connecté en : " + (mb.userProfile.emailAddress || "?"));
       info("Compte      : " + (mb.userProfile.displayName || "?"));
     }
+    // Détection du contexte "boîte partagée" (accès délégué)
+    if (mb.item && typeof mb.item.getSharedPropertiesAsync === "function") {
+      await new Promise((resolve) => {
+        mb.item.getSharedPropertiesAsync((res) => {
+          if (res.status === Office.AsyncResultStatus.Succeeded && res.value) {
+            const v = res.value;
+            const target = v.targetMailbox || "";
+            const owner = v.owner || "";
+            if (target) {
+              info("CONTEXTE PARTAGÉ DÉTECTÉ");
+              info("   Boîte visée  : " + target);
+              info("   Propriétaire : " + (owner || "?"));
+            } else {
+              info("Contexte : boîte personnelle (aucune délégation détectée)");
+            }
+            if (v.targetRestUrl) info("   REST URL     : " + v.targetRestUrl);
+          } else {
+            info("getSharedPropertiesAsync indisponible/échoué");
+          }
+          resolve();
+        });
+      });
+    } else {
+      info("getSharedPropertiesAsync non disponible sur cet élément");
+    }
+
     const versions = ["1.1","1.3","1.5","1.8","1.10","1.11","1.12","1.13","1.14","1.15"];
     const supported = versions.filter((v) => { try { return Office.context.requirements.isSetSupported("Mailbox", v); } catch (e) { return false; } });
     info("Versions Mailbox supportées : " + (supported.join(", ") || "aucune"));

@@ -1,13 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  ATTENTION : ce fichier est un MODELE avec des URL fictives.
-  N installez PAS ce fichier dans Outlook.
-  Telechargez le manifest reel depuis :
-  https://<votre-app>.up.railway.app/manifest.xml?download=1
--->
-<!--
   Manifest du complément Outlook « Triage des e-mails » — GÉNÉRÉ DYNAMIQUEMENT.
-  Toutes les URL pointent vers : https://YOUR_APP.up.railway.app
+  Toutes les URL pointent vers : https://triageoutlook-production.up.railway.app
 -->
 <OfficeApp
   xmlns="http://schemas.microsoft.com/office/appforoffice/1.1"
@@ -22,12 +16,12 @@
   <DefaultLocale>fr-FR</DefaultLocale>
   <DisplayName DefaultValue="Triage des e-mails"/>
   <Description DefaultValue="Analyse et classe automatiquement vos e-mails par lot dans les bons dossiers grâce à l'IA."/>
-  <IconUrl DefaultValue="https://YOUR_APP.up.railway.app/static/assets/icon-64.png"/>
-  <HighResolutionIconUrl DefaultValue="https://YOUR_APP.up.railway.app/static/assets/icon-128.png"/>
-  <SupportUrl DefaultValue="https://YOUR_APP.up.railway.app/"/>
+  <IconUrl DefaultValue="https://triageoutlook-production.up.railway.app/static/assets/icon-64.png"/>
+  <HighResolutionIconUrl DefaultValue="https://triageoutlook-production.up.railway.app/static/assets/icon-128.png"/>
+  <SupportUrl DefaultValue="https://triageoutlook-production.up.railway.app/"/>
 
   <AppDomains>
-    <AppDomain>https://YOUR_APP.up.railway.app</AppDomain>
+    <AppDomain>https://triageoutlook-production.up.railway.app</AppDomain>
   </AppDomains>
 
   <Hosts>
@@ -43,7 +37,7 @@
   <FormSettings>
     <Form xsi:type="ItemRead">
       <DesktopSettings>
-        <SourceLocation DefaultValue="https://YOUR_APP.up.railway.app/taskpane.html"/>
+        <SourceLocation DefaultValue="https://triageoutlook-production.up.railway.app/taskpane.html"/>
         <RequestedHeight>450</RequestedHeight>
       </DesktopSettings>
     </Form>
@@ -70,6 +64,9 @@
       <Hosts>
         <Host xsi:type="MailHost">
           <DesktopFormFactor>
+            <!-- REQUIS pour que l'Add-in s'active dans une boite partagee (acces delegue).
+                 Sans cette ligne, l'icone reste grisee dans la boite partagee. -->
+            <SupportsSharedFolders>true</SupportsSharedFolders>
             <ExtensionPoint xsi:type="MessageReadCommandSurface">
               <OfficeTab id="TabDefault">
                 <Group id="triageOutlookGroup">
@@ -101,12 +98,12 @@
 
       <Resources>
         <bt:Images>
-          <bt:Image id="Icon.16x16" DefaultValue="https://YOUR_APP.up.railway.app/static/assets/icon-16.png"/>
-          <bt:Image id="Icon.32x32" DefaultValue="https://YOUR_APP.up.railway.app/static/assets/icon-32.png"/>
-          <bt:Image id="Icon.80x80" DefaultValue="https://YOUR_APP.up.railway.app/static/assets/icon-80.png"/>
+          <bt:Image id="Icon.16x16" DefaultValue="https://triageoutlook-production.up.railway.app/static/assets/icon-16.png"/>
+          <bt:Image id="Icon.32x32" DefaultValue="https://triageoutlook-production.up.railway.app/static/assets/icon-32.png"/>
+          <bt:Image id="Icon.80x80" DefaultValue="https://triageoutlook-production.up.railway.app/static/assets/icon-80.png"/>
         </bt:Images>
         <bt:Urls>
-          <bt:Url id="Taskpane.Url" DefaultValue="https://YOUR_APP.up.railway.app/taskpane.html"/>
+          <bt:Url id="Taskpane.Url" DefaultValue="https://triageoutlook-production.up.railway.app/taskpane.html"/>
         </bt:Urls>
         <bt:ShortStrings>
           <bt:String id="GroupLabel" DefaultValue="Triage IA"/>
