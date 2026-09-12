@@ -667,21 +667,25 @@
       info("Compte      : " + (mb.userProfile.displayName || "?"));
     }
     // Détection du contexte "boîte partagée" (accès délégué)
+    const sharedCtx = { targetRestUrl: "", targetMailbox: "", owner: "", permissions: null };
     if (mb.item && typeof mb.item.getSharedPropertiesAsync === "function") {
       await new Promise((resolve) => {
         mb.item.getSharedPropertiesAsync((res) => {
           if (res.status === Office.AsyncResultStatus.Succeeded && res.value) {
             const v = res.value;
-            const target = v.targetMailbox || "";
-            const owner = v.owner || "";
-            if (target) {
+            sharedCtx.targetMailbox = v.targetMailbox || "";
+            sharedCtx.owner = v.owner || "";
+            sharedCtx.targetRestUrl = v.targetRestUrl || "";
+            sharedCtx.permissions = v.delegatePermissions;
+            if (sharedCtx.targetMailbox) {
               info("CONTEXTE PARTAGÉ DÉTECTÉ");
-              info("   Boîte visée  : " + target);
-              info("   Propriétaire : " + (owner || "?"));
+              info("   Boîte visée  : " + sharedCtx.targetMailbox);
+              info("   Propriétaire : " + (sharedCtx.owner || "?"));
             } else {
               info("Contexte : boîte personnelle (aucune délégation détectée)");
             }
-            if (v.targetRestUrl) info("   REST URL     : " + v.targetRestUrl);
+            info("   Permissions  : " + (typeof v.delegatePermissions === "number" ? v.delegatePermissions : "?"));
+            if (sharedCtx.targetRestUrl) info("   REST URL     : " + sharedCtx.targetRestUrl);
           } else {
             info("getSharedPropertiesAsync indisponible/échoué");
           }
@@ -760,27 +764,125 @@
     log(sep);
 
     // --- TEST 4 : catégories de couleur ---
-    log("TEST 4 — Catégories de couleur (mode dégradé possible)");
+    log("TEST 4 — Catégories existantes de la boîte partagée");
     const item = mb.item;
+    let existingCats = [];
     if (!item) {
       info("Aucun message ouvert : test ignoré (ouvrez un message de la boîte partagée)");
-    } else if (!item.categories || typeof item.categories.addAsync !== "function") {
-      ko("item.categories.addAsync indisponible");
     } else {
-      const label = "HermesTest";
-      await new Promise((resolve) => {
-        item.categories.addAsync([label], (res) => {
-          if (res.status === Office.AsyncResultStatus.Succeeded) {
-            ok("Catégorie ajoutée avec succès → les catégories FONCTIONNENT");
-            item.categories.removeAsync([label], (r2) => {
-              if (r2.status === Office.AsyncResultStatus.Succeeded) { ok("Catégorie de test retirée (aucune trace laissée)"); }
-              else { info("Nettoyage : à retirer manuellement si besoin"); }
-              resolve();
-            });
-          } else {
-            ko("Échec catégorie : " + (res.error ? res.error.message : "inconnu"));
+      // 4a. Lire les catégories déjà présentes sur le message
+      if (item.categories && typeof item.categories.getAsync === "function") {
+        await new Promise((resolve) => {
+          item.categories.getAsync((res) => {
+            if (res.status === Office.AsyncResultStatus.Succeeded) {
+              existingCats = res.value || [];
+              ok("Lecture des catégories du message : OK (" + existingCats.length + " sur ce message)");
+              if (existingCats.length) info("   Déjà présentes : " + existingCats.slice(0, 8).join(", "));
+            } else {
+              ko("Lecture des catégories impossible : " + (res.error ? res.error.message : "?"));
+            }
             resolve();
+          });
+        });
+      }
+
+      // 4b. Lire la liste maître des catégories
+      let masterCats = [];
+      if (mb.masterCategories && typeof mb.masterCategories.getAsync === "function") {
+        await new Promise((resolve) => {
+          mb.masterCategories.getAsync((res) => {
+            if (res.status === Office.AsyncResultStatus.Succeeded) {
+              masterCats = (res.value || []).map((c) => c.displayName || c);
+              ok("Liste maître lisible : " + masterCats.length + " catégories disponibles");
+              if (masterCats.length) info("   Exemples : " + masterCats.slice(0, 10).join(", "));
+            } else {
+              ko("Liste maître illisible : " + (res.error ? res.error.message : "?"));
+            }
+            resolve();
+          });
+        });
+      }
+
+      // 4c. Tentative d'application d'une catégorie EXISTANTE (et non inventée)
+      if (item.categories && typeof item.categories.addAsync === "function" && masterCats.length) {
+        const free = masterCats.find((c) => existingCats.indexOf(c) === -1);
+        if (!free) {
+          info("Le message porte déjà toutes les catégories : test d'écriture ignoré (aucune modification)");
+        } else {
+          await new Promise((resolve) => {
+            item.categories.addAsync([free], (res) => {
+              if (res.status === Office.AsyncResultStatus.Succeeded) {
+                ok("APPLICATION D'UNE CATÉGORIE EXISTANTE : OK  (« " + free + " »)");
+                item.categories.removeAsync([free], (r2) => {
+                  if (r2.status === Office.AsyncResultStatus.Succeeded) { ok("Catégorie de test retirée (aucune trace laissée)"); }
+                  else { info("Nettoyage non confirmé : vérifiez la catégorie « " + free + " » sur ce message"); }
+                  resolve();
+                });
+              } else {
+                ko("Échec application (« " + free + " ») : " + (res.error ? res.error.message : "?"));
+                info("   → Confirme que les catégories sont verrouillées pour un délégué.");
+                resolve();
+              }
+            });
+          });
+        }
+      } else if (!masterCats.length) {
+        info("Aucune catégorie maître disponible : test d'écriture ignoré");
+      }
+    }
+    log(sep);
+
+    // --- TEST 5 : Outlook REST API (voie officielle Microsoft) ---
+    log("TEST 5 — Outlook REST API (voie recommandée par Microsoft hors EWS)");
+    if (!sharedCtx.targetMailbox) {
+      info("Non applicable : vous n'êtes pas dans un contexte partagé.");
+    } else if (typeof mb.getCallbackTokenAsync !== "function") {
+      ko("getCallbackTokenAsync indisponible");
+    } else {
+      await new Promise((resolve) => {
+        mb.getCallbackTokenAsync({ isRest: true }, async (res) => {
+          if (res.status !== Office.AsyncResultStatus.Succeeded || !res.value) {
+            ko("Jeton REST non obtenu : " + (res.error ? res.error.message : "?"));
+            resolve();
+            return;
           }
+          ok("Jeton REST obtenu");
+          const base = (sharedCtx.targetRestUrl || "https://outlook.office.com/api").replace(/\/+$/, "");
+          const headers = {
+            "Authorization": "Bearer " + res.value,
+            "Accept": "application/json",
+            "X-AnchorMailbox": sharedCtx.targetMailbox,
+          };
+          // 5a. Lister les dossiers de la boîte partagée
+          try {
+            const r = await fetch(base + "/v2.0/me/MailFolders?$top=100&$select=Id,DisplayName", { headers: headers });
+            if (r.ok) {
+              const data = await r.json();
+              const folders = (data.value || []);
+              ok("LISTE DES DOSSIERS : OK (" + folders.length + " dossiers via REST)");
+              const names = folders.map((f) => f.DisplayName).filter(Boolean);
+              if (names.length) info("   Dossiers : " + names.slice(0, 15).join(" | "));
+              // 5b. Lire un message
+              try {
+                const r2 = await fetch(base + "/v2.0/me/messages?$top=1&$select=Subject", { headers: headers });
+                if (r2.ok) {
+                  ok("LECTURE DES MESSAGES : OK");
+                  info("   → Le déplacement via REST devrait être possible !");
+                } else {
+                  ko("Lecture des messages refusée (HTTP " + r2.status + ")");
+                }
+              } catch (e2) {
+                ko("Lecture des messages bloquée : " + e2.message);
+              }
+            } else {
+              ko("Liste des dossiers refusée (HTTP " + r.status + ")");
+              if (r.status === 401 || r.status === 403) info("   → Jeton refusé ou REST API désactivée par le tenant.");
+            }
+          } catch (e) {
+            ko("Appel REST bloqué : " + e.message);
+            info("   → Cause possible : politique CORS du tenant ou REST API désactivée.");
+          }
+          resolve();
         });
       });
     }
@@ -793,7 +895,8 @@
       info("→ L'Add-in peut trier et déplacer les messages directement.");
     } else {
       ko("Déplacement automatique par EWS : IMPOSSIBLE sur cette boîte");
-      info("→ Solutions de repli : catégories de couleur + règle Outlook, ou Power Automate.");
+      info("   (Confirmé par la doc Microsoft : EWS n'est pas supporté en contexte délégué)");
+      info("→ Voie officielle Microsoft : Outlook REST API ou Microsoft Graph.");
     }
     log("");
     log("Fin du diagnostic — utilisez le bouton « Copier » pour me transmettre ce rapport.");
