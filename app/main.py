@@ -14,7 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from . import __version__
 from .ai import (
@@ -82,10 +82,63 @@ class EmailIn(BaseModel):
     body: str = ""
 
 
+def _colonnes_possibles(valeur: str, *candidats: str) -> str:
+    """Retourne la premiere valeur non vide parmi les candidats."""
+    for candidat in candidats:
+        if isinstance(candidat, str) and candidat.strip():
+            return candidat.strip()
+    return (valeur or "").strip()
+
+
+def _est_actif(valeur: Any) -> bool:
+    """Interprete la colonne Actif d'une liste SharePoint.
+
+    Absente : on considere le dossier actif, pour rester compatible avec les
+    appels historiques qui ne l'envoient pas.
+    """
+    if valeur is None:
+        return True
+    if isinstance(valeur, bool):
+        return valeur
+    if isinstance(valeur, (int, float)):
+        return valeur != 0
+    texte = str(valeur).strip().lower()
+    return texte not in {"non", "no", "false", "0", "inactif", "desactive", ""}
+
+
 class FolderIn(BaseModel):
-    name: str
-    folder_id: str
+    """Dossier cible.
+
+    Accepte les noms du contrat d'origine (name, folder_id, rule) comme ceux des
+    colonnes d'une liste SharePoint (Titre ou Title, Identifiant, Consigne,
+    Actif). Le flux peut ainsi envoyer directement les lignes de la liste, sans
+    transformation intermediaire.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    name: str = ""
+    folder_id: str = ""
     rule: str = ""
+
+    # Colonnes d'une liste SharePoint
+    Titre: str = ""
+    Title: str = ""
+    Identifiant: str = ""
+    Consigne: str = ""
+    Actif: Any = None
+
+    @model_validator(mode="after")
+    def _resoudre(self) -> "FolderIn":
+        """Ramene les deux nommages vers name / folder_id / rule."""
+        self.name = _colonnes_possibles(self.name, self.name, self.Titre, self.Title)
+        self.folder_id = _colonnes_possibles(self.folder_id, self.folder_id, self.Identifiant)
+        self.rule = _colonnes_possibles(self.rule, self.rule, self.Consigne)
+        return self
+
+    def utilisable(self) -> bool:
+        """Un dossier sans identifiant ne peut pas recevoir de deplacement."""
+        return bool(self.name and self.folder_id)
 
 
 class TriageRequest(BaseModel):
@@ -183,6 +236,14 @@ async def api_triage(request: Request, payload: TriageRequest) -> dict:
         for e in payload.emails
     ]
 
+    ignores = [
+        f.name or f.Titre or f.Title or "(sans nom)"
+        for f in payload.folders
+        if not _est_actif(f.Actif) or not f.utilisable()
+    ]
+    if ignores:
+        logger.info("Dossiers ignores : %s", ", ".join(ignores))
+
     folder_objs = [
         TargetFolderRule(
             name=f.name,
@@ -190,6 +251,7 @@ async def api_triage(request: Request, payload: TriageRequest) -> dict:
             rule=f.rule,
         )
         for f in payload.folders
+        if _est_actif(f.Actif) and f.utilisable()
     ]
 
     try:

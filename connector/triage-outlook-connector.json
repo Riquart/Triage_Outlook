@@ -1,0 +1,218 @@
+{
+  "swagger": "2.0",
+  "info": {
+    "title": "Triage Outlook",
+    "description": "Classement automatique d'e-mails par IA. L'application analyse un ou plusieurs messages et propose, pour chacun, le dossier cible le plus adapte avec un justificatif court.",
+    "version": "1.0.0"
+  },
+  "host": "triageoutlook-production.up.railway.app",
+  "basePath": "/",
+  "schemes": [
+    "https"
+  ],
+  "consumes": [
+    "application/json"
+  ],
+  "produces": [
+    "application/json"
+  ],
+  "securityDefinitions": {
+    "jeton": {
+      "type": "apiKey",
+      "in": "header",
+      "name": "x-auth-token"
+    }
+  },
+  "security": [
+    {
+      "jeton": []
+    }
+  ],
+  "paths": {
+    "/healthz": {
+      "get": {
+        "summary": "Etat du service",
+        "description": "Verifie que le service repond, et indique s'il fonctionne en mode reel ou en mode demonstration. Utilisez cette operation comme test de connexion.",
+        "operationId": "etatDuService",
+        "responses": {
+          "200": {
+            "description": "Service disponible",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "status": {
+                  "type": "string"
+                },
+                "version": {
+                  "type": "string"
+                },
+                "ai_provider": {
+                  "type": "string",
+                  "description": "gemini, anthropic ou demo"
+                },
+                "demo_mode": {
+                  "type": "boolean"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/triage": {
+      "post": {
+        "summary": "Classer des e-mails dans des dossiers",
+        "description": "Envoie un ou plusieurs messages et la liste des dossiers cibles avec leur consigne en francais. Renvoie, pour chaque message, le dossier propose et la raison.",
+        "operationId": "classerEmails",
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/DemandeClassement"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Classifications proposees",
+            "schema": {
+              "$ref": "#/definitions/ReponseClassement"
+            }
+          },
+          "401": {
+            "description": "Jeton invalide ou manquant"
+          }
+        }
+      }
+    }
+  },
+  "definitions": {
+    "Email": {
+      "type": "object",
+      "required": [
+        "id"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Identifiant du message (Internet Message Id du declencheur)"
+        },
+        "subject": {
+          "type": "string",
+          "description": "Objet du message"
+        },
+        "sender": {
+          "type": "string",
+          "description": "Adresse de l'expediteur"
+        },
+        "body": {
+          "type": "string",
+          "description": "Extrait du corps du message"
+        }
+      }
+    },
+    "Dossier": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Nom du dossier de destination (ou colonne Titre / Title)"
+        },
+        "folder_id": {
+          "type": "string",
+          "description": "Identifiant du dossier. Renvoye tel quel dans la reponse."
+        },
+        "rule": {
+          "type": "string",
+          "description": "Consigne en francais (ou colonne Consigne)"
+        },
+        "Titre": {
+          "type": "string",
+          "description": "Colonne Titre d'une liste SharePoint"
+        },
+        "Title": {
+          "type": "string",
+          "description": "Colonne Title d'une liste SharePoint"
+        },
+        "Identifiant": {
+          "type": "string",
+          "description": "Colonne Identifiant : l'identifiant du dossier Outlook"
+        },
+        "Consigne": {
+          "type": "string",
+          "description": "Colonne Consigne : la regle en francais"
+        },
+        "Actif": {
+          "type": "boolean",
+          "description": "Colonne Actif. Un dossier inactif est ignore par le service."
+        }
+      },
+      "description": "Dossier cible. Accepte les noms attendus par le service (name, folder_id, rule) comme les noms de colonnes d'une liste SharePoint (Titre ou Title, Identifiant, Consigne, Actif). Envoyez directement les lignes de la liste : le service retient les colonnes qui lui servent et ignore les autres."
+    },
+    "DemandeClassement": {
+      "type": "object",
+      "required": [
+        "emails",
+        "folders"
+      ],
+      "properties": {
+        "emails": {
+          "type": "array",
+          "description": "Les messages a classer",
+          "items": {
+            "$ref": "#/definitions/Email"
+          }
+        },
+        "folders": {
+          "type": "array",
+          "description": "Les dossiers cibles, avec leur consigne",
+          "items": {
+            "$ref": "#/definitions/Dossier"
+          }
+        },
+        "auth_token": {
+          "type": "string",
+          "description": "Solution de repli si le jeton n'est pas passe dans l'en-tete."
+        }
+      }
+    },
+    "Classification": {
+      "type": "object",
+      "properties": {
+        "item_id": {
+          "type": "string",
+          "description": "Identifiant du message classe"
+        },
+        "target_folder_name": {
+          "type": "string",
+          "description": "Dossier retenu"
+        },
+        "target_folder_id": {
+          "type": "string",
+          "description": "Identifiant du dossier retenu, tel qu'envoye"
+        },
+        "confidence": {
+          "type": "string",
+          "description": "Confiance : high, medium ou low"
+        },
+        "justification": {
+          "type": "string",
+          "description": "Raison du choix, en quelques mots"
+        }
+      }
+    },
+    "ReponseClassement": {
+      "type": "object",
+      "properties": {
+        "classifications": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/Classification"
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,17 @@
+[
+  {
+    "name": "EVE",
+    "folder_id": "EVE",
+    "rule": "Tous les mails qui concernent le logiciel EVE : questions d'utilisation, demandes d'assistance ou d'evolution, anomalies et incidents, informations et annonces sur le logiciel EVE."
+  },
+  {
+    "name": "COPIL",
+    "folder_id": "COPIL",
+    "rule": "Les mails lies a la gestion de l'entreprise : pilotage, comite de direction, budgets, recrutement, organisation, strategie, echanges avec la direction ou les associes. Ce qui concerne la marche de la societe plutot qu'un logiciel, un client ou un fournisseur."
+  },
+  {
+    "name": "A trier",
+    "folder_id": "A trier",
+    "rule": "Tout le reste : les mails qui ne concernent manifestement ni le logiciel EVE, ni la gestion de l'entreprise. Cette consigne sert de refuge pour ne pas forcer un classement douteux."
+  }
+]
