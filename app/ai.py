@@ -67,10 +67,12 @@ def _is_usable_key(val: str) -> bool:
 def _fournisseurs_disponibles() -> list[str]:
     """Les fournisseurs utilisables d'apres les cles presentes."""
     dispo = []
-    if _is_usable_key(_env("GEMINI_API_KEY")):
-        dispo.append("gemini")
+    # DeepSeek en tete : reponses en une demi-seconde et aucune surtension
+    # constatee, la ou les modeles Gemini flash renvoient des 503 par vagues.
     if _is_usable_key(_env("DEEPSEEK_API_KEY")):
         dispo.append("deepseek")
+    if _is_usable_key(_env("GEMINI_API_KEY")):
+        dispo.append("gemini")
     if _is_usable_key(_env("ANTHROPIC_API_KEY")):
         dispo.append("anthropic")
     return dispo
