@@ -3,6 +3,7 @@ Supporte Gemini (Google), Claude (Anthropic) et mode démo sans clé.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -18,6 +19,8 @@ DEFAULT_GEMINI_MODEL: Final = "gemini-3.6-flash"
 DEFAULT_ANTHROPIC_MODEL: Final = "claude-sonnet-5"
 
 ANTHROPIC_URL: Final = "https://api.anthropic.com/v1/messages"
+DEEPSEEK_URL: Final = "https://api.deepseek.com/chat/completions"
+DEFAULT_DEEPSEEK_MODEL: Final = "deepseek-chat"
 ANTHROPIC_VERSION: Final = "2023-06-01"
 GEMINI_URL_TEMPLATE: Final = (
     "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
@@ -25,9 +28,27 @@ GEMINI_URL_TEMPLATE: Final = (
 
 REQUEST_TIMEOUT: Final = 60.0
 
+# Statuts qui signalent une surtension passagere du cote du fournisseur : cela
+# vaut un nouvel essai, pas un abandon. Le 503 « high demand » de Google en fait
+# partie, il est intermittent.
+STATUTS_REESSAYABLES: Final = frozenset({429, 500, 502, 503, 504})
+
+# Trois tentatives par modele, avec des attentes croissantes (en secondes).
+TENTATIVES_PAR_MODELE: Final = 3
+ATTENTES: Final = (0.0, 1.5, 4.0)
+
 
 class AIError(RuntimeError):
     """Erreur remontée à l\'API."""
+
+    def __init__(self, message: str, statut: int | None = None) -> None:
+        super().__init__(message)
+        self.statut = statut
+
+    @property
+    def passager(self) -> bool:
+        """Vrai si l'erreur tient a une surtension, donc a un autre essai."""
+        return self.statut in STATUTS_REESSAYABLES
 
 
 def _env(name: str, default: str = "") -> str:
@@ -43,15 +64,32 @@ def _is_usable_key(val: str) -> bool:
     return not any(p in lower for p in placeholders)
 
 
+def _fournisseurs_disponibles() -> list[str]:
+    """Les fournisseurs utilisables d'apres les cles presentes."""
+    dispo = []
+    if _is_usable_key(_env("GEMINI_API_KEY")):
+        dispo.append("gemini")
+    if _is_usable_key(_env("DEEPSEEK_API_KEY")):
+        dispo.append("deepseek")
+    if _is_usable_key(_env("ANTHROPIC_API_KEY")):
+        dispo.append("anthropic")
+    return dispo
+
+
 def resolve_provider() -> str:
     forced = _env("AI_PROVIDER", "auto").lower()
     has_anthropic = _is_usable_key(_env("ANTHROPIC_API_KEY"))
     has_gemini = _is_usable_key(_env("GEMINI_API_KEY"))
+    has_deepseek = _is_usable_key(_env("DEEPSEEK_API_KEY"))
 
     if forced in {"anthropic", "claude"}:
         if not has_anthropic:
             raise AIError("AI_PROVIDER=anthropic mais ANTHROPIC_API_KEY est absente.")
         return "anthropic"
+    if forced in {"deepseek"}:
+        if not has_deepseek:
+            raise AIError("AI_PROVIDER=deepseek mais DEEPSEEK_API_KEY est absente.")
+        return "deepseek"
     if forced in {"gemini", "google"}:
         if not has_gemini:
             raise AIError("AI_PROVIDER=gemini mais GEMINI_API_KEY est absente.")
@@ -59,15 +97,8 @@ def resolve_provider() -> str:
     if forced in {"demo", "mock", "test"}:
         return "demo"
 
-    if has_gemini and not has_anthropic:
-        return "gemini"
-    if has_anthropic and not has_gemini:
-        return "anthropic"
-    if has_anthropic:
-        return "anthropic"
-    if has_gemini:
-        return "gemini"
-    return "demo"
+    disponibles = _fournisseurs_disponibles()
+    return disponibles[0] if disponibles else "demo"
 
 
 def provider_status() -> dict[str, Any]:
@@ -79,8 +110,14 @@ def provider_status() -> dict[str, Any]:
         "provider": provider,
         "demo": provider == "demo",
         "gemini_key": _is_usable_key(_env("GEMINI_API_KEY")),
+        "deepseek_key": _is_usable_key(_env("DEEPSEEK_API_KEY")),
         "anthropic_key": _is_usable_key(_env("ANTHROPIC_API_KEY")),
-        "model": _env("GEMINI_MODEL", DEFAULT_GEMINI_MODEL) if provider == "gemini" else DEFAULT_ANTHROPIC_MODEL,
+        "repli": _fournisseurs_disponibles()[1:] or [],
+        "model": {
+            "gemini": _env("GEMINI_MODEL", DEFAULT_GEMINI_MODEL),
+            "deepseek": _env("DEEPSEEK_MODEL", DEFAULT_DEEPSEEK_MODEL),
+            "anthropic": _env("ANTHROPIC_MODEL", DEFAULT_ANTHROPIC_MODEL),
+        }.get(provider, DEFAULT_GEMINI_MODEL),
     }
 
 
@@ -160,19 +197,44 @@ Réponds UNIQUEMENT avec un tableau JSON au format exact suivant :
 ]
 """
 
-    if provider == "anthropic":
-        try:
-            raw_json = await _call_anthropic(system_prompt, user_prompt)
-        except AIError as exc:
-            if _is_usable_key(_env("GEMINI_API_KEY")):
-                logger.warning("Échec Anthropic (%s), repli sur Gemini", exc)
-                raw_json = await _call_gemini(system_prompt, user_prompt)
-            else:
-                raise
-    else:
-        raw_json = await _call_gemini(system_prompt, user_prompt)
+    raw_json = await _appeler_modele(system_prompt, user_prompt, provider)
 
     return _parse_classifications(raw_json, emails, folders)
+
+
+async def _appeler_modele(system: str, user: str, principal: str) -> str:
+    """Interroge le fournisseur principal, puis les autres si celui-ci echoue.
+
+    Une surtension n'est jamais simultanee chez deux fournisseurs differents :
+    c'est la raison d'etre de ce repli. On essaie donc chacun dans l'ordre, et on
+    ne remonte l'erreur que si aucun n'a repondu.
+    """
+    appels = {
+        "gemini": _call_gemini,
+        "deepseek": _call_deepseek,
+        "anthropic": _call_anthropic,
+    }
+    ordre = [principal] + [f for f in _fournisseurs_disponibles() if f != principal]
+    derniere: AIError | None = None
+
+    for nom in ordre:
+        appel = appels.get(nom)
+        if appel is None:
+            continue
+        try:
+            texte = await appel(system, user)
+            if texte:
+                if nom != principal:
+                    logger.warning("Tri effectue par le fournisseur de repli : %s", nom)
+                return texte
+            derniere = AIError(f"{nom} : reponse vide.")
+        except AIError as exc:
+            derniere = exc
+            logger.warning("Fournisseur %s indisponible (%s)", nom, exc)
+
+    if derniere:
+        raise derniere
+    raise AIError("Aucun fournisseur d'IA disponible.")
 
 
 def _parse_classifications(
@@ -264,8 +326,10 @@ def _demo_classify(
 async def _call_gemini(system: str, user: str) -> str:
     api_key = _env("GEMINI_API_KEY")
     primary_model = _env("GEMINI_MODEL", DEFAULT_GEMINI_MODEL)
+    # Repli sur des modeles verifies comme disponibles avec la cle du service.
+    # « gemini-flash-latest » suit les mises a jour de Google et sert de filet.
     candidate_models = [primary_model]
-    for m in ["gemini-3.6-flash", "gemini-2.0-flash", "gemini-1.5-flash"]:
+    for m in ["gemini-3.6-flash", "gemini-3.5-flash", "gemini-flash-latest"]:
         if m not in candidate_models:
             candidate_models.append(m)
 
@@ -291,7 +355,10 @@ async def _call_gemini(system: str, user: str) -> str:
         except AIError as exc:
             last_error = exc
             err_str = str(exc).lower()
-            if "404" in err_str or "not found" in err_str:
+            # On passe au modele suivant si celui-ci n'existe pas, ou s'il est en
+            # surtension : un autre modele a des chances de repondre.
+            if exc.passager or "404" in err_str or "not found" in err_str:
+                logger.warning("Modèle %s indisponible (%s), repli", model, exc)
                 continue
             raise
     if last_error:
@@ -320,13 +387,67 @@ async def _call_anthropic(system: str, user: str) -> str:
     return text
 
 
-async def _post_json(url: str, payload: dict[str, Any], headers: dict[str, str], label: str) -> dict[str, Any]:
-    try:
-        async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
-            resp = await client.post(url, json=payload, headers=headers)
-    except Exception as exc:
-        raise AIError(f"{label} : erreur réseau ({exc.__class__.__name__}).") from exc
+async def _call_deepseek(system: str, user: str) -> str:
+    """Appelle DeepSeek, qui parle le dialecte d'OpenAI.
 
-    if resp.status_code >= 400:
-        raise AIError(f"{label} : erreur {resp.status_code} — {resp.text[:200]}")
-    return resp.json()
+    deepseek-chat rend un JSON propre en quelques dixiemes de seconde. On ecarte
+    deepseek-reasoner : avec response_format il consomme ses jetons en
+    raisonnement et rend un contenu vide.
+    """
+    api_key = _env("DEEPSEEK_API_KEY")
+    model = _env("DEEPSEEK_MODEL", DEFAULT_DEEPSEEK_MODEL)
+    payload = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ],
+        "temperature": 0.2,
+        "max_tokens": 2048,
+        "response_format": {"type": "json_object"},
+    }
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "content-type": "application/json",
+    }
+    data = await _post_json(DEEPSEEK_URL, payload, headers=headers, label=f"DeepSeek ({model})")
+    choices = data.get("choices") or []
+    if not choices:
+        raise AIError(f"DeepSeek ({model}) : reponse sans choix.")
+    return (choices[0].get("message", {}) or {}).get("content", "").strip()
+
+
+async def _post_json(url: str, payload: dict[str, Any], headers: dict[str, str], label: str) -> dict[str, Any]:
+    """Appelle l'API en reessayant les erreurs passageres.
+
+    Une surtension du fournisseur (429, 503...) ne doit pas faire echouer un tri :
+    on reessaie jusqu'a TENTATIVES_PAR_MODELE fois, avec une attente croissante.
+    Les autres erreurs (400, 401, 404) sont definitives et remontees aussitot.
+    """
+    derniere: AIError | None = None
+
+    for essai in range(TENTATIVES_PAR_MODELE):
+        if essai:
+            attente = ATTENTES[min(essai, len(ATTENTES) - 1)]
+            logger.info("%s : surtension, nouvel essai %d/%d dans %.1f s",
+                        label, essai + 1, TENTATIVES_PAR_MODELE, attente)
+            await asyncio.sleep(attente)
+
+        try:
+            async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
+                resp = await client.post(url, json=payload, headers=headers)
+        except Exception as exc:
+            derniere = AIError(f"{label} : erreur réseau ({exc.__class__.__name__}).", statut=None)
+            continue
+
+        if resp.status_code < 400:
+            return resp.json()
+
+        message = f"{label} : erreur {resp.status_code} — {resp.text[:200]}"
+        if resp.status_code not in STATUTS_REESSAYABLES:
+            raise AIError(message, statut=resp.status_code)
+
+        derniere = AIError(message, statut=resp.status_code)
+
+    assert derniere is not None
+    raise derniere
