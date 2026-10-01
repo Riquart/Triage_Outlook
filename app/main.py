@@ -128,13 +128,29 @@ class FolderIn(BaseModel):
     Consigne: str = ""
     Actif: Any = None
 
+    # Colonnes aux noms generiques, tels qu'un import Excel les cree parfois :
+    # field_1 est la colonne qui suit le titre, et ainsi de suite.
+    field_1: str = ""
+    field_2: str = ""
+    field_3: str = ""
+
     @model_validator(mode="after")
     def _resoudre(self) -> "FolderIn":
-        """Ramene les deux nommages vers name / folder_id / rule."""
+        """Ramene tous les nommages vers name / folder_id / rule."""
         self.name = _colonnes_possibles(self.name, self.name, self.Titre, self.Title)
-        self.folder_id = _colonnes_possibles(self.folder_id, self.folder_id, self.Identifiant)
-        self.rule = _colonnes_possibles(self.rule, self.rule, self.Consigne)
+        self.folder_id = _colonnes_possibles(
+            self.folder_id, self.folder_id, self.Identifiant, self.field_1
+        )
+        self.rule = _colonnes_possibles(self.rule, self.rule, self.Consigne, self.field_2)
+        if self.Actif is None and self.field_3:
+            self.Actif = self.field_3
+        self.colonnes_generiques = bool(
+            (self.field_1 or self.field_2 or self.field_3)
+            and not (self.Identifiant or self.Consigne)
+        )
         return self
+
+    colonnes_generiques: bool = False
 
     def utilisable(self) -> bool:
         """Un dossier sans identifiant ne peut pas recevoir de deplacement."""
@@ -235,6 +251,12 @@ async def api_triage(request: Request, payload: TriageRequest) -> dict:
         )
         for e in payload.emails
     ]
+
+    if any(f.colonnes_generiques for f in payload.folders):
+        logger.warning(
+            "La liste SharePoint expose des colonnes field_1 / field_2 / field_3 : "
+            "renommez-les un jour en Identifiant, Consigne et Actif."
+        )
 
     ignores = [
         f.name or f.Titre or f.Title or "(sans nom)"
